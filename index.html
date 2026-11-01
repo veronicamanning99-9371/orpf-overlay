@@ -87,7 +87,15 @@
 
   /* ---------- Corner logo ---------- */
   #bug{position:absolute;right:56px;top:48px;display:flex;gap:12px;align-items:center;padding:10px 14px;background:rgba(255,255,255,.94)}
-  #bug img{height:96px;width:auto;display:block}
+  #bug img{height:96px;width:auto;max-width:190px;object-fit:contain;display:block}
+
+  #partners{position:absolute;right:56px;bottom:64px;display:none;flex-direction:column;align-items:stretch}
+  #partners span{height:30px;padding:0 14px;background:var(--navy);color:var(--white);font-size:14px;font-weight:800;
+                 letter-spacing:.14em;text-transform:uppercase;line-height:30px;text-align:center;border-bottom:4px solid var(--teal)}
+  #partners .slot{position:relative;width:260px;height:110px;background:rgba(255,255,255,.94)}
+  #partners .slot img{position:absolute;inset:14px 18px;width:calc(100% - 36px);height:calc(100% - 28px);object-fit:contain;
+                      opacity:0;transition:opacity .8s ease}
+  #partners .slot img.on{opacity:1}
 
   #msg{position:absolute;left:64px;top:48px;padding:8px 14px;background:rgba(0,0,0,.6);font-size:18px;display:none}
 </style>
@@ -95,8 +103,19 @@
 <body>
 <div id="stage">
   <div id="bug">
+    <img src="ipf-logo.png" alt="" onerror="this.remove()">
     <img src="orpf-logo.png" alt="ORPF">
     <img src="fiji-logo.png" alt="" onerror="this.remove()">
+  </div>
+
+  <!-- Partner logos: rotate one at a time. Missing files are skipped automatically. -->
+  <div id="partners">
+    <span>Official partners</span>
+    <div class="slot">
+      <img src="eleiko-logo.png" alt="" onerror="this.remove()">
+      <img src="sbd-logo.png" alt="" onerror="this.remove()">
+      <img src="visitmalta-logo.png" alt="" onerror="this.remove()">
+    </div>
   </div>
 
   <div id="lower">
@@ -126,6 +145,19 @@
   const demo = q.get("demo") === "1";
 
   if (q.get("logo") === "0") document.getElementById("bug").remove();
+
+  // Partner rotator: shows one logo at a time, every 8 seconds (hide with &partners=0)
+  addEventListener("load", () => {
+    const box = document.getElementById("partners");
+    const imgs = [...box.querySelectorAll(".slot img")];
+    if (q.get("partners") === "0" || !imgs.length) { box.remove(); return; }
+    box.style.display = "flex";
+    let i = 0;
+    imgs[0].classList.add("on");
+    if (imgs.length > 1) setInterval(() => {
+      imgs[i].classList.remove("on"); i = (i + 1) % imgs.length; imgs[i].classList.add("on");
+    }, 8000);
+  });
   if (q.get("title")) document.getElementById("title").textContent = q.get("title");
   if (q.get("bg")) document.body.style.background = "#" + q.get("bg").replace("#", "");
 
