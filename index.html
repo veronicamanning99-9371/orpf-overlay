@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ORPF Live Overlay</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800;900&display=swap" rel="stylesheet">
+<!--
+  ORPF / Fiji Powerlifting live overlay for LiftingCast
+  -----------------------------------------------------
+  Default: 2026 Oceania Regional Powerlifting Championships (full power), platform auto-detected.
+
+  Optional settings (add to the end of the web address):
+    ?meet=mcuce2df9oqf     use a different LiftingCast meet (this one = Oceania Bench Press Championships)
+    &platform=xxxx         force a platform (only needed if a meet has more than one)
+    &demo=1                show sample lifts so you can position the overlay before the meet
+    &logo=0                hide the logo in the top-right corner
+    &title=Your%20text     change the small event label
+    &bg=00ff00             solid background colour (only if your device can't show transparency)
+-->
+<style>
+  :root{
+    --navy:#24246b;      /* ORPF indigo (from logo) */
+    --navy-2:#32328c;
+    --teal:#12a7d6;      /* ORPF "Regional" teal */
+    --fiji:#68bfe5;      /* Fiji flag blue */
+    --white:#ffffff;
+    --ink:#1b1b4d;
+    --good:#1fbf4a;
+    --bad:#e3262e;
+    --muted:#c9d3e6;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:100%;height:100%;overflow:hidden;background:transparent}
+  body{font-family:Montserrat,system-ui,sans-serif;color:var(--white);-webkit-font-smoothing:antialiased}
+
+  /* Everything is laid out on a 1920x1080 stage and scaled to the window */
+  #stage{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0}
+
+  /* ---------- Lower third ---------- */
+  #lower{position:absolute;left:64px;bottom:64px;opacity:0;transform:translateX(-40px);
+         transition:opacity .45s ease, transform .45s ease}
+  #lower.show{opacity:1;transform:none}
+
+  .tag{display:inline-flex;align-items:center;gap:10px;height:34px;padding:0 16px 0 14px;
+       background:var(--teal);color:var(--white);font-size:16px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
+  .tag::before{content:"";width:10px;height:10px;background:var(--white);transform:rotate(45deg)}
+
+  .name{position:relative;display:inline-block;min-width:520px;padding:14px 40px 14px 28px;
+        background:linear-gradient(90deg,var(--navy) 0%,var(--navy-2) 100%)}
+  .name::before{content:"";position:absolute;left:0;top:0;bottom:0;width:8px;background:var(--fiji)}
+  .name h1{font-size:44px;font-weight:900;line-height:1.05;letter-spacing:.01em;text-transform:uppercase;white-space:nowrap}
+  .name h1.long{font-size:36px}
+  .name h1.xlong{font-size:30px}
+  .name p{margin-top:4px;font-size:20px;font-weight:700;letter-spacing:.06em;color:var(--fiji);text-transform:uppercase;white-space:nowrap}
+
+  .row{display:flex;align-items:stretch;height:112px}
+  .lift{display:flex;align-items:center;justify-content:center;width:190px;background:var(--navy);
+        font-size:30px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;border-top:4px solid var(--teal)}
+  .attempts{display:flex;align-items:stretch;background:linear-gradient(90deg,#dfe6f2 0%,#ffffff 60%);padding:0 18px;border-top:4px solid var(--teal)}
+  .att{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;width:150px;color:var(--ink)}
+  .att .w{font-size:40px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+  .att .w.empty{color:#9aa6bf}
+  .att .bar{margin-top:12px;width:56px;height:12px;background:#c3cad8}
+  .att.good .bar{background:var(--good)}
+  .att.bad  .bar{background:var(--bad)}
+  .att.bad  .w{color:#7a8299;text-decoration:line-through;text-decoration-thickness:3px;text-decoration-color:var(--bad)}
+  .att.current .bar{background:var(--navy);animation:pulse 1.2s ease-in-out infinite}
+  .att.current .w{color:var(--navy-2)}
+  .att.current.good .bar{background:var(--good);animation:none}
+  .att.current.bad  .bar{background:var(--bad);animation:none}
+  @keyframes pulse{50%{opacity:.35}}
+
+  .best{display:flex;flex-direction:column;justify-content:center;gap:6px;min-width:150px;padding:10px 16px;
+        background:linear-gradient(180deg,var(--navy) 0%,var(--navy-2) 100%);border-top:4px solid var(--teal)}
+  .best div{display:flex;align-items:center;gap:12px;height:24px;padding-left:10px;border-left:6px solid var(--fiji);
+            font-size:20px;font-weight:800;font-variant-numeric:tabular-nums}
+  .best b{width:18px;color:var(--fiji);font-weight:900}
+
+  /* Masi (tapa) triangle strip along the bottom of the block */
+  .masi{height:12px;background:
+        linear-gradient(135deg,var(--navy) 25%,transparent 25%) 0 0/24px 12px repeat-x,
+        linear-gradient(225deg,var(--navy) 25%,transparent 25%) 0 0/24px 12px repeat-x,
+        var(--fiji)}
+
+  /* ---------- Corner logo ---------- */
+  #bug{position:absolute;right:56px;top:48px;display:flex;gap:12px;align-items:center;padding:10px 14px;background:rgba(255,255,255,.94)}
+  #bug img{height:96px;width:auto;display:block}
+
+  #msg{position:absolute;left:64px;top:48px;padding:8px 14px;background:rgba(0,0,0,.6);font-size:18px;display:none}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="bug">
+    <img src="orpf-logo.png" alt="ORPF">
+    <img src="fiji-logo.png" alt="" onerror="this.remove()">
+  </div>
+
+  <div id="lower">
+    <div class="tag" id="title">2026 Oceania Championships · Suva, Fiji</div><br>
+    <div class="name">
+      <h1 id="lname">&nbsp;</h1>
+      <p id="lsub">&nbsp;</p>
+    </div>
+    <div class="row">
+      <div class="lift" id="liftname">Squat</div>
+      <div class="attempts" id="atts"></div>
+      <div class="best" id="best"></div>
+    </div>
+    <div class="masi"></div>
+  </div>
+
+  <div id="msg"></div>
+</div>
+
+<script>
+(() => {
+  const DEFAULT_MEET = "m9bsari0ve6g";        // 2026 Oceania Regional Powerlifting Championships - Fiji
+  const API = "https://liftingcast.com/api/meets/";
+  const q = new URLSearchParams(location.search);
+  const meetId = q.get("meet") || DEFAULT_MEET;
+  let platformId = q.get("platform") || "";
+  const demo = q.get("demo") === "1";
+
+  if (q.get("logo") === "0") document.getElementById("bug").remove();
+  if (q.get("title")) document.getElementById("title").textContent = q.get("title");
+  if (q.get("bg")) document.body.style.background = "#" + q.get("bg").replace("#", "");
+
+  // Scale the 1920x1080 stage to whatever size the device gives us
+  const stage = document.getElementById("stage");
+  const fit = () => stage.style.transform = `scale(${Math.min(innerWidth / 1920, innerHeight / 1080)})`;
+  addEventListener("resize", fit); fit();
+
+  const LIFT = { squat: "Squat", bench: "Bench", dead: "Deadlift" };
+  const SHORT = { squat: "S", bench: "B", dead: "D" };
+  const $ = id => document.getElementById(id);
+  const fmt = w => (w === undefined || w === null || w === "" || Number(w) === 0) ? "—" : String(Number(w));
+
+  // ---- data state ----
+  let docs = [];            // all meet docs (lifters, attempts, divisions)
+  let current = null;       // platform.currentAttempt (includes currentLifter)
+  let lastLifter = null;
+
+  async function getJSON(url) {
+    const r = await fetch(url, { cache: "no-store" });
+    if (!r.ok) throw new Error(r.status);
+    return r.json();
+  }
+
+  async function loadMeet() {
+    try {
+      const d = await getJSON(API + meetId + "/");
+      docs = d.docs || [];
+      if (!platformId) {
+        const p = docs.find(x => x._id && x._id[0] === "p" && !x.type);
+        if (p) platformId = p._id;
+      }
+      hideMsg();
+    } catch (e) { showMsg("Can't reach LiftingCast (meet) – retrying…"); }
+  }
+
+  async function loadPlatform() {
+    if (!platformId) return;
+    try {
+      const d = await getJSON(API + meetId + "/platforms/" + platformId + "/");
+      const p = (d.docs || [])[0] || {};
+      current = p.currentAttempt && p.currentAttempt.currentLifter ? p.currentAttempt : null;
+      hideMsg();
+    } catch (e) { showMsg("Can't reach LiftingCast (platform) – retrying…"); }
+    render();
+  }
+
+  function showMsg(t) { if (demo) return; $("msg").textContent = t; $("msg").style.display = "block"; }
+  function hideMsg() { $("msg").style.display = "none"; }
+
+  function divisionLabel(lifter) {
+    const divs = docs.filter(x => x._id && x._id[0] === "d" && x.lifts);
+    for (const ld of lifter.divisions || []) {
+      const dv = divs.find(d => d._id === ld.divisionId);
+      if (!dv || /^(best lifter|overall)/i.test(dv.name)) continue;
+      const wc = dv.weightClasses && dv.weightClasses[ld.declaredAwardsWeightClassId];
+      const name = dv.name.replace(/\s+(PL|BP|DL|SBD)$/i, "");
+      const cls = wc && wc.name && wc.name !== "All" ? `${wc.name} kg` : "";
+      return { text: [name, cls].filter(Boolean).join(" · "), lifts: dv.lifts };
+    }
+    return { text: "", lifts: null };
+  }
+
+  function render() {
+    const box = $("lower");
+    if (!current) { box.classList.remove("show"); return; }
+
+    const L = current.currentLifter;
+    const liftName = current.liftName;
+    const attempts = docs.filter(a => a.lifterId === L._id && a.liftName && a._id[0] === "a");
+
+    // Name + subline
+    const nm = $("lname");
+    nm.textContent = L.name || "";
+    nm.className = (L.name || "").length > 26 ? "xlong" : (L.name || "").length > 20 ? "long" : "";
+    const div = divisionLabel(L);
+    $("lsub").textContent = [L.team || L.country || "", div.text].filter(Boolean).join("  ·  ") || " ";
+
+    // Current lift attempts 1–3
+    $("liftname").textContent = LIFT[liftName] || liftName;
+    let html = "";
+    for (const n of ["1", "2", "3"]) {
+      let a = attempts.find(x => x.liftName === liftName && String(x.attemptNumber) === n) || {};
+      const isCur = current._id === a._id || (current.attemptNumber == n && !a._id);
+      if (isCur) a = Object.assign({}, a, current);           // platform data is freshest
+      const cls = ["att", a.result || "", isCur ? "current" : ""].join(" ");
+      const w = fmt(a.weight);
+      html += `<div class="${cls}"><span class="w ${w === "—" ? "empty" : ""}">${w}</span><span class="bar"></span></div>`;
+    }
+    $("atts").innerHTML = html;
+
+    // Best lifts (only lifts in this lifter's division)
+    const lifts = div.lifts ? Object.keys(LIFT).filter(k => div.lifts[k]) : Object.keys(LIFT);
+    $("best").innerHTML = lifts.map(k => {
+      const good = attempts.filter(a => a.liftName === k && a.result === "good").map(a => Number(a.weight) || 0);
+      if (current.liftName === k && current.result === "good") good.push(Number(current.weight) || 0);
+      return `<div><b>${SHORT[k]}</b>${good.length ? fmt(Math.max(...good)) : ""}</div>`;
+    }).join("");
+
+    // Slide in again when a new lifter comes up
+    if (lastLifter !== L._id) {
+      box.classList.remove("show"); void box.offsetWidth;
+      lastLifter = L._id;
+    }
+    box.classList.add("show");
+  }
+
+  // ---- demo mode: cycles through sample lifts so you can position the overlay ----
+  function startDemo() {
+    docs = [
+      { _id: "dx", name: "Men's Open PL", lifts: { squat: true, bench: true, dead: true }, weightClasses: { w1: { name: "93" } } },
+      { _id: "dy", name: "Women's Masters I PL", lifts: { squat: true, bench: true, dead: true }, weightClasses: { w2: { name: "63" } } },
+      { _id: "a1s-L1", lifterId: "L1", liftName: "squat", attemptNumber: "1", weight: 240, result: "good" },
+      { _id: "a2s-L1", lifterId: "L1", liftName: "squat", attemptNumber: "2", weight: 257.5 },
+      { _id: "a1s-L2", lifterId: "L2", liftName: "squat", attemptNumber: "1", weight: 135, result: "good" },
+      { _id: "a2s-L2", lifterId: "L2", liftName: "squat", attemptNumber: "2", weight: 142.5, result: "bad" },
+      { _id: "a3s-L2", lifterId: "L2", liftName: "squat", attemptNumber: "3", weight: 142.5 },
+    ];
+    const L1 = { _id: "L1", name: "Daniel PATEL", team: "Fiji", divisions: [{ divisionId: "dx", declaredAwardsWeightClassId: "w1" }] };
+    const L2 = { _id: "L2", name: "Mele TUILAGI-FAUMUINA", team: "Samoa", divisions: [{ divisionId: "dy", declaredAwardsWeightClassId: "w2" }] };
+    const steps = [
+      { _id: "a2s-L1", liftName: "squat", attemptNumber: "2", weight: 257.5, currentLifter: L1 },
+      { _id: "a2s-L1", liftName: "squat", attemptNumber: "2", weight: 257.5, result: "good", currentLifter: L1 },
+      { _id: "a3s-L2", liftName: "squat", attemptNumber: "3", weight: 142.5, currentLifter: L2 },
+      { _id: "a3s-L2", liftName: "squat", attemptNumber: "3", weight: 142.5, result: "bad", currentLifter: L2 },
+    ];
+    let i = 0;
+    const tick = () => { current = steps[i++ % steps.length]; render(); };
+    tick(); setInterval(tick, 3500);
+  }
+
+  if (demo) { startDemo(); return; }
+  loadMeet().then(loadPlatform);
+  setInterval(loadPlatform, 1500);   // current lifter / lights – small, fast
+  setInterval(loadMeet, 5000);       // all attempts – bigger, slower
+})();
+</script>
+</body>
+</html>
