@@ -176,36 +176,65 @@
   let current = null;       // platform.currentAttempt (includes currentLifter)
   let lastLifter = null;
 
+  // LiftingCast limits how many requests one internet connection can make.
+  // So: check the platform every few seconds, only download the whole meet when
+  // the attempt changes (or once a minute), and back off if LiftingCast says "too many".
+  const POLL_MS = Math.max(3000, (Number(q.get("every")) || 4) * 1000);
+  const MEET_REFRESH_MS = 60000;
+  const debug = q.get("debug") === "1";
+  let pausedUntil = 0, lastMeetLoad = 0, lastKey = "", failures = 0;
+
   async function getJSON(url) {
     const r = await fetch(url, { cache: "no-store" });
+    if (r.status === 429) {
+      let wait = 60000;
+      try { wait = (await r.json()).additionalInfo.msBeforeNext || wait; } catch (e) {}
+      pausedUntil = Date.now() + wait + 2000;
+      throw new Error("rate-limited, waiting " + Math.round(wait / 1000) + "s");
+    }
     if (!r.ok) throw new Error(r.status);
     return r.json();
   }
 
   async function loadMeet() {
-    try {
-      const d = await getJSON(API + meetId + "/");
-      docs = d.docs || [];
-      if (!platformId) {
-        const p = docs.find(x => x._id && x._id[0] === "p" && !x.type);
-        if (p) platformId = p._id;
-      }
-      hideMsg();
-    } catch (e) { showMsg("Can't reach LiftingCast (meet) – retrying…"); }
+    const d = await getJSON(API + meetId + "/");
+    docs = d.docs || [];
+    lastMeetLoad = Date.now();
+    if (!platformId) {
+      const p = docs.find(x => x._id && x._id[0] === "p" && !x.type);
+      if (p) platformId = p._id;
+    }
   }
 
   async function loadPlatform() {
-    if (!platformId) return;
-    try {
-      const d = await getJSON(API + meetId + "/platforms/" + platformId + "/");
-      const p = (d.docs || [])[0] || {};
-      current = p.currentAttempt && p.currentAttempt.currentLifter ? p.currentAttempt : null;
-      hideMsg();
-    } catch (e) { showMsg("Can't reach LiftingCast (platform) – retrying…"); }
-    render();
+    const d = await getJSON(API + meetId + "/platforms/" + platformId + "/");
+    const p = (d.docs || [])[0] || {};
+    current = p.currentAttempt && p.currentAttempt.currentLifter ? p.currentAttempt : null;
   }
 
-  function showMsg(t) { if (demo) return; $("msg").textContent = t; $("msg").style.display = "block"; }
+  async function tick() {
+    if (Date.now() >= pausedUntil) {
+      try {
+        let fresh = false;
+        if (!platformId || !lastMeetLoad) { await loadMeet(); fresh = true; }
+        await loadPlatform();
+        // New attempt or new result? Refresh the full attempt list (also once a minute).
+        const key = current ? current._id + "|" + (current.result || "") + "|" + current.weight : "";
+        if (!fresh && ((key !== lastKey && current) || Date.now() - lastMeetLoad > MEET_REFRESH_MS)) {
+          await loadMeet();
+        }
+        lastKey = key;
+        failures = 0; hideMsg();
+      } catch (e) {
+        failures++;
+        showMsg("LiftingCast: " + e.message);   // only visible with &debug=1
+      }
+      render();                                  // keeps showing the last good data on errors
+    }
+    setTimeout(tick, POLL_MS);
+  }
+
+  function showMsg(t) { if (!debug) return; $("msg").textContent = t; $("msg").style.display = "block"; }
   function hideMsg() { $("msg").style.display = "none"; }
 
   function divisionLabel(lifter) {
@@ -290,9 +319,7 @@
   }
 
   if (demo) { startDemo(); return; }
-  loadMeet().then(loadPlatform);
-  setInterval(loadPlatform, 1500);   // current lifter / lights – small, fast
-  setInterval(loadMeet, 5000);       // all attempts – bigger, slower
+  tick();
 })();
 </script>
 </body>
